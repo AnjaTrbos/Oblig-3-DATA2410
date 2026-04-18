@@ -102,9 +102,52 @@ public class StudentsController(IConfiguration config) : ControllerBase
     {
         var studentsWithGrade = new List<Student>();
 
-        // Write code to calculate and update grades
+        try
+        { // first try to connect and then read all the students from the database
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            
 
-        return studentsWithGrade;
+            // 1) Read all students by using a simple sql select query 
+            using (var readCmd = new SqlCommand("SELECT Id, Name, Course, Marks FROM Students", conn))
+            // getting the results by using a data reader and then calculating the grade for each student and storing it in a list of students with grade
+            using (var reader = await readCmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    var marks = reader.GetInt32(3);
+                    studentsWithGrade.Add(new Student
+                    {
+                        Id = reader.GetInt32(0),
+                        Name = reader.GetString(1),
+                        Course = reader.GetString(2),
+                        Marks = marks,
+                        Grade = GetGrade(marks)
+                    });
+                }
+            }
+
+            // 2) Calculate + update grade for each student
+            foreach (var student in studentsWithGrade)
+            {
+                using var updateCmd = new SqlCommand(
+                    "UPDATE Students SET Grade = @Grade WHERE Id = @Id",
+                    conn);
+                updateCmd.Parameters.AddWithValue("@Id", student.Id);
+                updateCmd.Parameters.AddWithValue("@Grade", student.Grade ?? (object)DBNull.Value);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            return studentsWithGrade;
+        }
+        catch (SqlException ex)
+        {
+            return Problem($"Database error while calculating grades: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return Problem($"Unexpected error while calculating grades: {ex.Message}");
+        }
     }
 
     [HttpGet("report")]
