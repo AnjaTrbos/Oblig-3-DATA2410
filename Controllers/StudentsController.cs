@@ -113,8 +113,10 @@ public class StudentsController(IConfiguration config) : ControllerBase
             // getting the results by using a data reader and then calculating the grade for each student and storing it in a list of students with grade
             using (var reader = await readCmd.ExecuteReaderAsync())
             {
+                // Read each student and calculate their grade
                 while (await reader.ReadAsync())
                 {
+                    // use 3 as the index for marks because it is the 4th column in the select query (Id, Name, Course, Marks)
                     var marks = reader.GetInt32(3);
                     studentsWithGrade.Add(new Student
                     {
@@ -130,21 +132,22 @@ public class StudentsController(IConfiguration config) : ControllerBase
             // 2) Calculate + update grade for each student
             foreach (var student in studentsWithGrade)
             {
+                // Update the grade for each student in the database using a simple sql set query
                 using var updateCmd = new SqlCommand(
                     "UPDATE Students SET Grade = @Grade WHERE Id = @Id",
                     conn);
-                updateCmd.Parameters.AddWithValue("@Id", student.Id);
-                updateCmd.Parameters.AddWithValue("@Grade", student.Grade ?? (object)DBNull.Value);
-                await updateCmd.ExecuteNonQueryAsync();
+                updateCmd.Parameters.AddWithValue("@Id", student.Id); // which student to use
+                updateCmd.Parameters.AddWithValue("@Grade", student.Grade ?? (object)DBNull.Value); // which grade to set
+                await updateCmd.ExecuteNonQueryAsync(); // execute the update query for each student
             }
 
             return studentsWithGrade;
         }
-        catch (SqlException ex)
+        catch (SqlException ex) // catch any sql exceptions that may occur during the database operations
         {
             return Problem($"Database error while calculating grades: {ex.Message}");
         }
-        catch (Exception ex)
+        catch (Exception ex) // catch any other exceptions that may occur during the grade calculation process
         {
             return Problem($"Unexpected error while calculating grades: {ex.Message}");
         }
@@ -153,8 +156,53 @@ public class StudentsController(IConfiguration config) : ControllerBase
     [HttpGet("report")]
     public async Task<IActionResult> Report()
     {
-        // Write code for the report generation logic.
-        return Ok();
+        try
+        {
+            // Connect to the database
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            // with the help of groupby command we can group the students by couruse 
+            using var cmd = new SqlCommand(
+                @"SELECT
+                    Course,
+                    COUNT(*) AS StudentCount, // count all students in each course
+                    AVG(Marks) AS AverageMarks, // calculate the average marks for each course
+                    SUM(CASE WHEN Grade = 'A' THEN 1 ELSE 0 END) AS GradeACount, // count how many students got grade A in each course
+                    SUM(CASE WHEN Grade = 'B' THEN 1 ELSE 0 END) AS GradeBCount, // same as above 
+                    SUM(CASE WHEN Grade = 'C' THEN 1 ELSE 0 END) AS GradeCCount,
+                    SUM(CASE WHEN Grade = 'D' THEN 1 ELSE 0 END) AS GradeDCount
+                  FROM Students
+                  GROUP BY Course", conn);
+            using var reader = await cmd.ExecuteReaderAsync();
+
+            // read the results and store in a lis of objects 
+            var report = new List<object>();
+            while (await reader.ReadAsync())
+            {
+                // for each course we will have the course name, student count, average marks and the count of each grade in that course
+                report.Add(new
+                {
+                    Course = reader.GetString(0),
+                    StudentCount = reader.GetInt32(1),
+                    AverageMarks = reader.GetDecimal(2),
+                    GradeACount = reader.GetInt32(3),
+                    GradeBCount = reader.GetInt32(4),
+                    GradeCCount = reader.GetInt32(5),
+                    GradeDCount = reader.GetInt32(6)
+                });
+            }
+
+            return Ok(report); // return the report 
+        }
+        catch (SqlException ex) // catch any sql exceptions that may occur during the database operations
+        {
+            return Problem($"Database error while generating report: {ex.Message}");
+        }
+        catch (Exception ex) // catch any other exceptions that may occur during the report generation process
+        {
+            return Problem($"Unexpected error while generating report: {ex.Message}");
+        }
     }
 
     [HttpDelete("{id}")]
